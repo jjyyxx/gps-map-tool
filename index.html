@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>GPS Map Tool</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vue-virtual-scroller@1.0.4/dist/vue-virtual-scroller.css" integrity="sha256-QthZQh7S+Z/wDvSerxYpTiKys15R9zw7e2oFrhw2Dsk=" crossorigin="anonymous">
+  <link rel="stylesheet" href="main.css">
+
+  <script src="https://cdn.jsdelivr.net/npm/moment@2.24.0/min/moment.min.js" integrity="sha256-4iQZ6BVL4qNKlQ27TExEhBN1HFPvAvAMbFavKKosSWQ=" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vue@2.6.11/dist/vue.min.js" integrity="sha256-ngFW3UnAN0Tnm76mDuu7uUtYEcG3G5H1+zioJw3t+68=" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vue-virtual-scroller@1.0.4/dist/vue-virtual-scroller.min.js" integrity="sha256-u77AavXsq3CcKp4WbWHdb7NX3F1Jb15cm4VjRov/9GM=" crossorigin="anonymous"></script>
+  <script type="text/javascript" src="https://webapi.amap.com/maps?v=1.4.15&key=1b51a35ff4acb28090880a94fcbffee6"></script> 
+</head>
+<body>
+  <div id="container">
+    <aside>
+      <section>
+        <h2 class="split">设置</h2>
+        <div class="options">
+          <label class="switch">
+            <input type="checkbox" checked @change="glob('tryGBK', $event.target.checked)">
+            <span class="slider"></span>
+            尝试GBK编码
+          </label>
+          <label class="switch">
+            <input type="checkbox" checked @change="glob('toGCJ', $event.target.checked)">
+            <span class="slider"></span>
+            进行GCJ-02转换
+          </label>
+        </div>
+        <div class="field" style="margin-top: 8px;">
+          <label for="thresh" style="width: 120px; text-decoration: black underline dashed;" title="默认1000，卡顿可以改小，改善显示效果可以改大，不建议超过10000。对新增加的GPGGA数据生效。">海量点实时重绘阈值</label>
+          <input type="number" name="thresh" step="1" min="1" max="10000" v-model.number="thresh">
+        </div>
+        <button class="btn" type="submit" style="margin-top: 8px;" @click="exportImage">导出地图</button>
+        <div class="btn-group">
+          <a href="https://github.com" target="_blank"><button class="btn">查看项目</button></a>
+          <button class="btn" @click="about">关于</button>
+        </div>
+      </section>
+      <section>
+        <h2 class="split">添加单个点</h2>
+        <form @submit.prevent="addPoint">
+          <div class="field">
+            <label for="latitude">纬度</label>
+            <input type="number" name="latitude" step="any" min="-90" max="90" v-model.number="latitude">
+          </div>
+          <div class="field">
+            <label for="longitude">经度</label>
+            <input type="number" name="longitude" step="any" min="-180" max="180" v-model.number="longitude">
+          </div>
+          <button class="btn" type="submit" style="margin-top: 8px;" :disabled="pointDisabled">添加</button>
+        </form>
+      </section>
+      <section>
+        <h2 class="split">添加GPGGA数据</h2>
+        <form @submit.prevent="addGPGGA" id="gpgga">
+          <textarea placeholder="在此输入GPGGA数据或从文件导入" class="scroll" type="text" name="gpgga" v-model="gpgga"></textarea>
+          <div class="btn-group">
+            <button class="btn" type="submit" :disabled="gpggaDisabled">解析并添加</button>
+            <button class="btn" @click.prevent="importFile">导入文件</button>
+          </div>
+        </form>
+      </section>
+      <section class="mark-table">
+        <h2 class="split" style="margin-bottom: 0;">标记点列表</h2>
+        <template v-if="marks.length">
+          <div class="mark-item" :class="{ 'scroll-fix': hasScroll }">
+            <span>类型</span><span>经度</span><span>纬度</span>
+          </div>
+          <div class="hairline"></div>
+          <recycle-scroller
+            ref="scroller"
+            class="scroller scroll"
+            :items="marks"
+            :item-size="28"
+            key-field="id"
+          >
+            <template v-slot:default="{ item, index }">
+              <div class="mark-item" :class="{ 'mark-item--odd': index % 2, 'mark-item--even': !(index % 2), 'active': active === item.id }" @click="active = item.id">
+                <span>{{ item.type }}</span><span>{{ item.lng | T8 }}</span><span>{{ item.lat | T8 }}</span>
+              </div>
+            </template>
+          </recycle-scroller>
+        </template>
+        <template v-else>
+          <div class="placeholder">
+            <span>添加坐标或GPGGA信息以显示</span>
+          </div>
+        </template>
+      </section>
+    </aside>
+    <main>
+      <div ref="gpsMap" style="width:100%;height:100%;"></div>
+      <div v-cloak v-if="showDialog" class="dialog">
+        <div class="header">
+          <div class="title">坐标信息</div>
+          <div class="icon">
+            <svg viewBox="0 0 12 12" version="1.1" xmlns="http://www.w3.org/2000/svg" @click="active = -1">
+              <line x1="1" y1="11" 
+                    x2="11" y2="1" 
+                    stroke="black" 
+                    stroke-width="2"/>
+              <line x1="1" y1="1" 
+                    x2="11" y2="11" 
+                    stroke="black" 
+                    stroke-width="2"/>
+            </svg>
+          </div>
+        </div>
+        <div class="body">
+          <template v-if="dialogContent.type === 'GPGGA'">
+            <div class="disp-field">
+              <label>UTC时间</label>
+              <span>{{dialogContent.time | TIME}}</span>
+            </div>
+            <div class="disp-field">
+              <label>原始经度</label>
+              <span>{{dialogContent.longitude | T8}}</span>
+            </div>
+            <div class="disp-field">
+              <label>原始纬度</label>
+              <span>{{dialogContent.latitude | T8}}</span>
+            </div>
+            <div class="disp-field">
+              <label>GCJ-02经度</label>
+              <span>{{dialogContent.lnglat.lng | T8}}</span>
+            </div>
+            <div class="disp-field">
+              <label>GCJ-02纬度</label>
+              <span>{{dialogContent.lnglat.lat | T8}}</span>
+            </div>
+            <div class="disp-field">
+              <label>GPS状态</label>
+              <span>{{dialogContent.quality}} - {{dialogContent.quality | STATUS}}</span>
+            </div>
+            <div class="disp-field">
+              <label>使用卫星数量</label>
+              <span>{{dialogContent.satellites}}</span>
+            </div>
+            <div class="disp-field">
+              <label>水平精度因子</label>
+              <span>{{dialogContent.hdop}}</span>
+            </div>
+            <div class="disp-field">
+              <label>椭球高</label>
+              <span>{{dialogContent.altitude}}</span>
+            </div>
+            <div class="disp-field">
+              <label>geoid高度异常差值</label>
+              <span>{{dialogContent.geoidAltitude}}</span>
+            </div>
+            <div class="disp-field">
+              <label>差分GPS数据期限</label>
+              <span>{{dialogContent.age}}</span>
+            </div>
+            <div class="disp-field">
+              <label>差分参考基站标号</label>
+              <span>{{dialogContent.stationID}}</span>
+            </div>
+            <button class="btn" @click="createMark">创建标记</button>
+            <button class="btn" @click="centerMassMark">移至界面中心</button>
+            <button class="btn" @click="toggleMark">切换海量点可见性</button>
+            <button class="btn" @click="deleteMassMark">删除海量点</button>
+          </template>
+          <template v-else>
+            <div class="disp-field">
+              <label>原始经度</label>
+              <span>{{dialogContent.longitude | T8}}</span>
+            </div>
+            <div class="disp-field">
+              <label>原始纬度</label>
+              <span>{{dialogContent.latitude | T8}}</span>
+            </div>
+            <div class="disp-field">
+              <label>GCJ-02经度</label>
+              <span>{{dialogContent.lnglat.lng | T8}}</span>
+            </div>
+            <div class="disp-field">
+              <label>GCJ-02纬度</label>
+              <span>{{dialogContent.lnglat.lat | T8}}</span>
+            </div>
+            <button class="btn" @click="centerMark">移至界面中心</button>
+            <button class="btn" @click="toggleMark">切换标记可见性</button>
+            <button class="btn" @click="deleteMark">删除标记</button>
+          </template>
+        </div>
+      </div>
+      <div v-cloak v-if="showAbout" class="dialog about">
+        <div class="header">
+          <div class="title">关于</div>
+          <div class="icon">
+            <svg viewBox="0 0 12 12" version="1.1" xmlns="http://www.w3.org/2000/svg" @click="showAbout = false">
+              <line x1="1" y1="11" 
+                    x2="11" y2="1" 
+                    stroke="black" 
+                    stroke-width="2"/>
+              <line x1="1" y1="1" 
+                    x2="11" y2="11" 
+                    stroke="black" 
+                    stroke-width="2"/>
+            </svg>
+          </div>
+        </div>
+        <div class="body">
+          <p>项目作者：蒋宇轩</p>
+          <p>建议浏览器宽高不小于700像素以获得合适的显示效果，推荐在F11全屏下使用</p>
+          <p>建议使用现代浏览器（Chrome、Firefox、Safari或Edge）的较新版本，以获得正确的渲染效果</p>
+          <p>本项目基于高德地图 AutoNavi SDK 编写</p>
+          <p>本项目离不开以下开源软件的支持</p>
+          <ul>
+            <li><a href="https://github.com/moment/moment">moment.js</a> - 时间解析与格式化</li>
+            <li><a href="https://github.com/vuejs/vue">vue</a> - 界面模板</li>
+            <li><a href="https://github.com/Akryum/vue-virtual-scroller">vue-virtual-scroller</a> - 长列表渲染</li>
+          </ul>
+          <p>本项目在开发期间使用了以下开源软件</p>
+          <ul>
+            <li><a href="https://github.com/sass/node-sass">node-sass</a> - SCSS编译</li>
+            <li><a href="https://github.com/Microsoft/vscode">vscode</a> - 代码编写</li>
+          </ul>
+          <p>本项目尚有一些有待改进之处</p>
+          <ul>
+            <li>对于从东经180°跨越至西经180°（程序中为-180°）的轨迹，当前逻辑不能选用合适的缩放级别</li>
+            <li>长列表/大规模数据点进一步优化：已经经过一定优化，但目前添加超过10000个点时，响应会出现一定的卡顿；不能添加多于500000个点。</li>
+            <li>使用 Web Worker 后台解析 GPGGA 文本，避免主线程短暂卡死</li>
+            <li>更灵活的编码/坐标转换/标注/点样式支持</li>
+            <li>更丰富的数据导入及导出支持</li>
+            <li>考虑支持其他的地图后端</li>
+            <li>引入前端构建工具/项目模块化</li>
+            <li>移动端适配</li>
+          </ul>
+          <p>欢迎参与<a href="https://github.com">项目</a>开发，贡献代码</p>
+        </div>
+      </div>
+    </main>
+  </main>
+  <script src="main.js"></script>
+</body>
+</html>
