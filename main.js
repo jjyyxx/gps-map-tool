@@ -10,7 +10,7 @@ function select(type) {
 		const L = () => {
 			resolve(upload.files[0])
 		}
-		upload.addEventListener('input', L, { once: true })
+		upload.addEventListener('change', L, { once: true })
 		upload.click()
 	})
 }

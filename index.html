@@ -56,7 +56,7 @@
       <section>
         <h2 class="split">添加GPGGA数据</h2>
         <form @submit.prevent="addGPGGA" id="gpgga">
-          <textarea placeholder="在此输入GPGGA数据或从文件导入" class="scroll" type="text" name="gpgga" v-model="gpgga"></textarea>
+          <textarea spellcheck="false" placeholder="在此输入GPGGA数据或从文件导入" class="scroll" type="text" name="gpgga" v-model="gpgga"></textarea>
           <div class="btn-group">
             <button class="btn" type="submit" :disabled="gpggaDisabled">解析并添加</button>
             <button class="btn" @click.prevent="importFile">导入文件</button>
